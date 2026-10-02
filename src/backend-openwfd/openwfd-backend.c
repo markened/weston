@@ -163,17 +163,6 @@ openwfd_output_destroy(struct weston_output *base)
 
 	if (output->frame_timer)
 		wl_event_source_remove(output->frame_timer);
-	if (base->renderer_state)
-		backend->gl_renderer->output_destroy(base);
-
-	wl_list_for_each_safe(mode, next, &base->mode_list, link) {
-		struct openwfd_mode *wfd_mode =
-			container_of(mode, struct openwfd_mode, base);
-
-		wl_list_remove(&mode->link);
-		free(wfd_mode);
-	}
-
 	if (backend->device != WFD_INVALID_HANDLE) {
 		int i;
 
@@ -183,6 +172,17 @@ openwfd_output_destroy(struct weston_output *base)
 						 output->frame_source[i]);
 		wfdDestroyPipeline(backend->device, output->pipeline);
 		wfdDestroyPort(backend->device, head->port);
+	}
+
+	if (base->renderer_state)
+		backend->gl_renderer->output_destroy(base);
+
+	wl_list_for_each_safe(mode, next, &base->mode_list, link) {
+		struct openwfd_mode *wfd_mode =
+			container_of(mode, struct openwfd_mode, base);
+
+		wl_list_remove(&mode->link);
+		free(wfd_mode);
 	}
 
 	wl_list_remove(&head->link);
@@ -425,11 +425,6 @@ openwfd_output_create(struct openwfd_backend *backend,
 err_frame_timer:
 	if (output->frame_timer)
 		wl_event_source_remove(output->frame_timer);
-	if (output->base.renderer_state)
-		backend->gl_renderer->output_destroy(&output->base);
-err_weston_output:
-	weston_output_destroy(&output->base);
-err_pipeline:
 	for (i = 0; i < 2; i++) {
 		if (output->frame_source[i] != WFD_INVALID_HANDLE) {
 			wfdDestroySource(backend->device,
@@ -438,6 +433,11 @@ err_pipeline:
 			output->frame_source[i] = WFD_INVALID_HANDLE;
 		}
 	}
+	if (output->base.renderer_state)
+		backend->gl_renderer->output_destroy(&output->base);
+err_weston_output:
+	weston_output_destroy(&output->base);
+err_pipeline:
 	if (output->pipeline != WFD_INVALID_HANDLE)
 		wfdDestroyPipeline(backend->device, output->pipeline);
 err_output:

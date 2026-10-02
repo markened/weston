@@ -25,29 +25,53 @@
 
 #include "compositor.h"
 #include "openwfd-capabilities.h"
+#include "gl-renderer.h"
+
+struct openwfd_mode {
+	struct weston_mode base;
+	WFDPortMode mode;
+};
 
 struct openwfd_backend {
 	struct weston_compositor base;
 	WFDDevice device;
+	WFDEvent event;
+	struct wl_event_source *event_timer;
+	struct gl_renderer_interface *gl_renderer;
 	struct openwfd_capabilities capabilities;
 	struct wl_list head_list;
+	int initialized;
 };
 
 struct openwfd_head {
+	struct openwfd_backend *backend;
 	WFDPort port;
+	struct weston_output *output;
+	WFDint port_id;
+	int pipeline_id;
+	int x;
 	struct wl_list link;
 };
 
 struct openwfd_output {
 	struct weston_output base;
 	struct openwfd_head *head;
+	WFDPipeline pipeline;
+	WFDSource frame_source[2];
+	struct wl_event_source *frame_timer;
+	int current_slot;
+	int pending_slot;
+	int x;
 };
 
 int
-openwfd_head_create(struct openwfd_backend *backend);
+openwfd_head_create(struct openwfd_backend *backend, WFDint port_id, int x);
 
 int
 openwfd_output_create(struct openwfd_backend *backend,
 		      struct openwfd_head *head);
+
+void
+openwfd_dispatch_events(struct openwfd_backend *backend);
 
 #endif

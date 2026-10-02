@@ -55,8 +55,17 @@ int
 openwfd_probe_capabilities(WFDDevice dev,
 			   struct openwfd_capabilities *caps);
 
+void
+openwfd_probe_port_pipeline(WFDDevice dev,
+			    WFDPort port,
+			    WFDPipeline pipeline,
+			    struct openwfd_capabilities *caps);
+
 int
 openwfd_capabilities_satisfy_requirements(
 	const struct openwfd_capabilities *caps);
+
+void
+openwfd_log_capabilities(const struct openwfd_capabilities *caps);
 
 #endif

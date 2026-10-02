@@ -72,6 +72,8 @@ struct gl_renderer_interface {
 	EGLImageKHR (*output_get_image)(struct weston_output *output,
 					unsigned int target);
 
+	void (*output_sync)(struct weston_output *output);
+
 	/* Sets the output border.
 	 *
 	 * The side specifies the side for which we are setting the border.

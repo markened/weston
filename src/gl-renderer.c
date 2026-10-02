@@ -1869,6 +1869,13 @@ gl_renderer_output_get_image(struct weston_output *output,
 }
 
 static void
+gl_renderer_output_sync(struct weston_output *output)
+{
+	if (get_output_state(output)->offscreen)
+		glFinish();
+}
+
+static void
 gl_renderer_output_destroy(struct weston_output *output)
 {
 	struct gl_renderer *gr = get_renderer(output->compositor);
@@ -2259,6 +2266,7 @@ WL_EXPORT struct gl_renderer_interface gl_renderer_interface = {
 	.output_surface = gl_renderer_output_surface,
 	.output_set_target = gl_renderer_output_set_target,
 	.output_get_image = gl_renderer_output_get_image,
+	.output_sync = gl_renderer_output_sync,
 	.output_set_border = gl_renderer_output_set_border,
 	.print_egl_error_state = gl_renderer_print_egl_error_state
 };

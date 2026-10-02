@@ -47,6 +47,12 @@ int
 openwfd_probe_capabilities(WFDDevice dev, struct openwfd_capabilities *caps)
 {
 	enum { max_extensions_to_log = 256 };
+	static const WFDStringID info_ids[] = {
+		WFD_VENDOR, WFD_RENDERER, WFD_VERSION
+	};
+	static const char *info_names[] = {
+		"vendor", "renderer", "version"
+	};
 	WFDint device_id;
 	WFDint extension_count;
 	WFDint extension_capacity;
@@ -54,6 +60,7 @@ openwfd_probe_capabilities(WFDDevice dev, struct openwfd_capabilities *caps)
 	WFDint i;
 	WFDErrorCode error;
 	const char **extensions;
+	const char *info[1];
 
 	if (caps == NULL)
 		return -1;
@@ -71,6 +78,13 @@ openwfd_probe_capabilities(WFDDevice dev, struct openwfd_capabilities *caps)
 		weston_log("OpenWFD: querying device ID failed with error %d\n",
 			   error);
 		return -1;
+	}
+
+	for (i = 0; i < ARRAY_LENGTH(info_ids); i++) {
+		if (wfdGetStrings(dev, info_ids[i], info, 1) > 0 &&
+		    wfdGetError(dev) == WFD_ERROR_NONE)
+			weston_log("OpenWFD: %s: %s\n", info_names[i],
+				   info[0] ? info[0] : "(unknown)");
 	}
 
 	extension_count = wfdGetStrings(dev, WFD_EXTENSIONS, NULL, 0);
@@ -113,11 +127,25 @@ openwfd_probe_capabilities(WFDDevice dev, struct openwfd_capabilities *caps)
 	}
 
 	/*
-	 * The core OpenWF-Display API does not expose the EGLImage binding,
-	 * completion-event, or source-release guarantees required here. Leave
-	 * those and optional capabilities disabled until a vendor probe exists.
+	 * Capabilities which require a port, pipeline, or actual EGLImage source
+	 * are filled after those objects have been queried or created.
 	 */
-	weston_log("OpenWFD: capability matrix (1=supported, 0=unknown/assumed no): "
+	weston_log("OpenWFD: device ID %d; completion semantics %s "
+		   "(conservative default; vendor confirmation required)\n",
+		   device_id,
+		   openwfd_completion_semantics_name(caps->completion_semantics));
+	openwfd_log_capabilities(caps);
+
+	return 0;
+}
+
+void
+openwfd_log_capabilities(const struct openwfd_capabilities *caps)
+{
+	if (caps == NULL)
+		return;
+
+	weston_log("OpenWFD: capability matrix (unknown capabilities default to 0): "
 		   "eglimage_source=%d at_vsync_transition=%d "
 		   "bind_completion_events=%d reliable_source_release=%d "
 		   "explicit_acquire_fence=%d explicit_release_fence=%d "
@@ -129,12 +157,57 @@ openwfd_probe_capabilities(WFDDevice dev, struct openwfd_capabilities *caps)
 		   caps->overlays, caps->source_alpha, caps->global_alpha,
 		   caps->scaling, caps->rotation, caps->partial_refresh,
 		   caps->protected_output);
-	weston_log("OpenWFD: device ID %d; completion semantics %s "
-		   "(conservative default; vendor confirmation required)\n",
-		   device_id,
+	weston_log("OpenWFD: completion semantics: %s\n",
 		   openwfd_completion_semantics_name(caps->completion_semantics));
+}
 
-	return 0;
+void
+openwfd_probe_port_pipeline(WFDDevice dev, WFDPort port,
+			   WFDPipeline pipeline,
+			   struct openwfd_capabilities *caps)
+{
+	WFDint value;
+	WFDint rotation;
+	WFDint transparent;
+	WFDfloat scale_range[2];
+	WFDErrorCode error;
+
+	if (caps == NULL)
+		return;
+
+	value = wfdGetPortAttribi(dev, port,
+				  WFD_PORT_PARTIAL_REFRESH_SUPPORT);
+	error = wfdGetError(dev);
+	if (error == WFD_ERROR_NONE && value != WFD_FALSE)
+		caps->partial_refresh = 1;
+
+	rotation = wfdGetPipelineAttribi(dev, pipeline,
+					 WFD_PIPELINE_ROTATION_SUPPORT);
+	error = wfdGetError(dev);
+	if (error == WFD_ERROR_NONE && rotation != WFD_ROTATION_SUPPORT_NONE)
+		caps->rotation = 1;
+
+	wfdGetPipelineAttribfv(dev, pipeline, WFD_PIPELINE_SCALE_RANGE,
+			       2, scale_range);
+	error = wfdGetError(dev);
+	if (error == WFD_ERROR_NONE &&
+	    (scale_range[0] < 1.0f || scale_range[1] > 1.0f))
+		caps->scaling = 1;
+
+	transparent = wfdGetPipelineAttribi(dev, pipeline,
+					   WFD_PIPELINE_TRANSPARENCY_ENABLE);
+	error = wfdGetError(dev);
+	if (error == WFD_ERROR_NONE) {
+		if (transparent & WFD_TRANSPARENCY_SOURCE_ALPHA)
+			caps->source_alpha = 1;
+		if (transparent & WFD_TRANSPARENCY_GLOBAL_ALPHA)
+			caps->global_alpha = 1;
+	}
+
+	value = wfdGetPortAttribi(dev, port, WFD_PORT_PROTECTION_ENABLE);
+	error = wfdGetError(dev);
+	if (error == WFD_ERROR_NONE && value != WFD_FALSE)
+		caps->protected_output = 1;
 }
 
 int

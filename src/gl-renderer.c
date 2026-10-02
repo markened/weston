@@ -69,6 +69,11 @@ struct gl_border_image {
 
 struct gl_output_state {
 	EGLSurface egl_surface;
+	int offscreen;
+	GLuint framebuffer;
+	GLuint textures[2];
+	EGLImageKHR images[2];
+	unsigned int target;
 	pixman_region32_t buffer_damage[BUFFER_DAMAGE_COUNT];
 	enum gl_border_status border_damage[BUFFER_DAMAGE_COUNT];
 	struct gl_border_image borders[4];
@@ -793,6 +798,12 @@ output_get_damage(struct weston_output *output,
 	EGLBoolean ret;
 	int i;
 
+	if (go->offscreen) {
+		pixman_region32_copy(buffer_damage, &output->region);
+		*border_damage = BORDER_ALL_DIRTY;
+		return;
+	}
+
 	if (gr->has_egl_buffer_age) {
 		ret = eglQuerySurface(gr->egl_display, go->egl_surface,
 				      EGL_BUFFER_AGE_EXT, &buffer_age);
@@ -832,7 +843,7 @@ output_rotate_damage(struct weston_output *output,
 	struct gl_renderer *gr = get_renderer(output->compositor);
 	int i;
 
-	if (!gr->has_egl_buffer_age)
+	if (!gr->has_egl_buffer_age || go->offscreen)
 		return;
 
 	for (i = BUFFER_DAMAGE_COUNT - 1; i >= 1; i--) {
@@ -862,14 +873,20 @@ gl_renderer_repaint_output(struct weston_output *output,
 	pixman_region32_t buffer_damage, total_damage;
 	enum gl_border_status border_damage = BORDER_STATUS_CLEAN;
 
+	if (use_output(output) < 0)
+		return;
+
+	if (go->offscreen) {
+		glBindFramebuffer(GL_FRAMEBUFFER, go->framebuffer);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+				       GL_TEXTURE_2D, go->textures[go->target], 0);
+	}
+
 	/* Calculate the viewport */
 	glViewport(go->borders[GL_RENDERER_BORDER_LEFT].width,
 		   go->borders[GL_RENDERER_BORDER_BOTTOM].height,
 		   output->current_mode->width,
 		   output->current_mode->height);
-
-	if (use_output(output) < 0)
-		return;
 
 	/* if debugging, redraw everything outside the damage to clean up
 	 * debug lines from the previous draw on this buffer:
@@ -903,6 +920,12 @@ gl_renderer_repaint_output(struct weston_output *output,
 
 	pixman_region32_copy(&output->previous_damage, output_damage);
 	wl_signal_emit(&output->frame_signal, output);
+
+	if (go->offscreen) {
+		glFlush();
+		go->border_status = BORDER_STATUS_CLEAN;
+		return;
+	}
 
 #ifdef EGL_EXT_swap_buffers_with_damage
 	if (gr->swap_buffers_with_damage) {
@@ -1724,6 +1747,127 @@ gl_renderer_output_create(struct weston_output *output,
 	return 0;
 }
 
+static int
+gl_renderer_output_create_offscreen(struct weston_output *output)
+{
+	static const EGLint surface_attribs[] = {
+		EGL_WIDTH, 1,
+		EGL_HEIGHT, 1,
+		EGL_NONE
+	};
+	static const EGLint image_attribs[] = {
+		EGL_IMAGE_PRESERVED_KHR, EGL_TRUE,
+		EGL_NONE
+	};
+	struct gl_renderer *gr = get_renderer(output->compositor);
+	struct gl_output_state *go;
+	GLenum status;
+	int i;
+
+	go = calloc(1, sizeof *go);
+	if (!go)
+		return -1;
+
+	go->offscreen = 1;
+	go->egl_surface = eglCreatePbufferSurface(gr->egl_display,
+						  gr->egl_config,
+						  surface_attribs);
+	if (go->egl_surface == EGL_NO_SURFACE) {
+		weston_log("failed to create offscreen EGL pbuffer\n");
+		free(go);
+		return -1;
+	}
+
+	if (gr->egl_context == NULL &&
+	    gl_renderer_setup(output->compositor, go->egl_surface) < 0)
+		goto err_surface;
+	if (eglMakeCurrent(gr->egl_display, go->egl_surface,
+			   go->egl_surface, gr->egl_context) == EGL_FALSE)
+		goto err_surface;
+	if (!gr->create_image || !gr->destroy_image) {
+		weston_log("EGLImage creation is unavailable for WFD output\n");
+		goto err_surface;
+	}
+
+	glGenFramebuffers(1, &go->framebuffer);
+	glBindFramebuffer(GL_FRAMEBUFFER, go->framebuffer);
+	glGenTextures(ARRAY_LENGTH(go->textures), go->textures);
+	for (i = 0; i < 2; i++) {
+		glBindTexture(GL_TEXTURE_2D, go->textures[i]);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+			     output->current_mode->width,
+			     output->current_mode->height, 0,
+			     GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+		if (i == 0)
+			glFramebufferTexture2D(GL_FRAMEBUFFER,
+					       GL_COLOR_ATTACHMENT0,
+					       GL_TEXTURE_2D,
+					       go->textures[i], 0);
+	}
+	status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+	if (status != GL_FRAMEBUFFER_COMPLETE) {
+		weston_log("offscreen GL framebuffer is incomplete: 0x%x\n",
+			   status);
+		goto err_gl;
+	}
+
+	for (i = 0; i < 2; i++) {
+		go->images[i] = gr->create_image(gr->egl_display, gr->egl_context,
+						 EGL_GL_TEXTURE_2D_KHR,
+						 (EGLClientBuffer)(uintptr_t)
+						 go->textures[i],
+						 image_attribs);
+		if (go->images[i] == EGL_NO_IMAGE_KHR) {
+			weston_log("failed to create EGLImage for WFD target %d\n",
+				   i);
+			goto err_images;
+		}
+	}
+
+	for (i = 0; i < BUFFER_DAMAGE_COUNT; i++)
+		pixman_region32_init(&go->buffer_damage[i]);
+	output->renderer_state = go;
+
+	return 0;
+
+err_images:
+	while (--i >= 0)
+		gr->destroy_image(gr->egl_display, go->images[i]);
+err_gl:
+	glDeleteTextures(2, go->textures);
+	glDeleteFramebuffers(1, &go->framebuffer);
+err_surface:
+	eglDestroySurface(gr->egl_display, go->egl_surface);
+	free(go);
+	return -1;
+}
+
+static void
+gl_renderer_output_set_target(struct weston_output *output,
+			      unsigned int target)
+{
+	struct gl_output_state *go = get_output_state(output);
+
+	if (target < 2)
+		go->target = target;
+}
+
+static EGLImageKHR
+gl_renderer_output_get_image(struct weston_output *output,
+			     unsigned int target)
+{
+	struct gl_output_state *go = get_output_state(output);
+
+	if (target >= 2)
+		return EGL_NO_IMAGE_KHR;
+
+	return go->images[target];
+}
+
 static void
 gl_renderer_output_destroy(struct weston_output *output)
 {
@@ -1733,6 +1877,18 @@ gl_renderer_output_destroy(struct weston_output *output)
 
 	for (i = 0; i < 2; i++)
 		pixman_region32_fini(&go->buffer_damage[i]);
+
+	if (go->offscreen) {
+		for (i = 0; i < 2; i++)
+			if (go->images[i] != EGL_NO_IMAGE_KHR)
+				gr->destroy_image(gr->egl_display,
+						  go->images[i]);
+		if (use_output(output) == 0) {
+			glDeleteTextures(2, go->textures);
+			glDeleteFramebuffers(1, &go->framebuffer);
+		} else
+			weston_log("failed to make WFD output current for cleanup\n");
+	}
 
 	eglDestroySurface(gr->egl_display, go->egl_surface);
 
@@ -2098,8 +2254,11 @@ WL_EXPORT struct gl_renderer_interface gl_renderer_interface = {
 	.create = gl_renderer_create,
 	.display = gl_renderer_display,
 	.output_create = gl_renderer_output_create,
+	.output_create_offscreen = gl_renderer_output_create_offscreen,
 	.output_destroy = gl_renderer_output_destroy,
 	.output_surface = gl_renderer_output_surface,
+	.output_set_target = gl_renderer_output_set_target,
+	.output_get_image = gl_renderer_output_get_image,
 	.output_set_border = gl_renderer_output_set_border,
 	.print_egl_error_state = gl_renderer_print_egl_error_state
 };

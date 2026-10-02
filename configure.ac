@@ -203,7 +203,10 @@ AC_ARG_ENABLE([openwfd-backend],
                              [build the OpenWFD backend (requires openwfd)]),,
               [enable_openwfd_backend=no])
 if test "x$enable_openwfd_backend" = "xyes"; then
-  PKG_CHECK_MODULES([OPENWFD], [openwfd])
+  if test "x$enable_egl" != "xyes"; then
+    AC_MSG_ERROR([OpenWFD backend requires EGL support])
+  fi
+  PKG_CHECK_MODULES([OPENWFD], [openwfd egl glesv2])
 fi
 AM_CONDITIONAL([ENABLE_OPENWFD_BACKEND],
                [test x$enable_openwfd_backend = xyes])

@@ -298,6 +298,23 @@ fbdev_backend_la_SOURCES =			\
 	src/evdev-touchpad.c
 endif
 
+if ENABLE_OPENWFD_BACKEND
+module_LTLIBRARIES += openwfd-backend.la
+openwfd_backend_la_LDFLAGS = -module -avoid-version
+openwfd_backend_la_LIBADD = $(COMPOSITOR_LIBS) $(OPENWFD_LIBS) $(EGL_LIBS)
+openwfd_backend_la_CFLAGS =			\
+	$(COMPOSITOR_CFLAGS)			\
+	$(OPENWFD_CFLAGS)			\
+	$(EGL_CFLAGS)				\
+	$(GCC_CFLAGS)
+openwfd_backend_la_SOURCES =			\
+	src/backend-openwfd/openwfd-backend.c	\
+	src/backend-openwfd/openwfd-capabilities.c \
+	src/backend-openwfd/openwfd-capabilities.h \
+	src/backend-openwfd/openwfd-private.h	\
+	src/gl-renderer.h
+endif
+
 if ENABLE_RDP_COMPOSITOR
 module_LTLIBRARIES += rdp-backend.la
 rdp_backend_la_LDFLAGS = -module -avoid-version

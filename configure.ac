@@ -198,6 +198,19 @@ AS_IF([test x$enable_fbdev_compositor = xyes], [
   PKG_CHECK_MODULES([FBDEV_COMPOSITOR], [libudev >= 136 mtdev >= 1.1.0])
 ])
 
+AC_ARG_ENABLE([openwfd-backend],
+              AS_HELP_STRING([--enable-openwfd-backend],
+                             [build the OpenWFD backend (requires openwfd)]),,
+              [enable_openwfd_backend=no])
+if test "x$enable_openwfd_backend" = "xyes"; then
+  if test "x$enable_egl" != "xyes"; then
+    AC_MSG_ERROR([OpenWFD backend requires EGL support])
+  fi
+  PKG_CHECK_MODULES([OPENWFD], [openwfd egl glesv2])
+fi
+AM_CONDITIONAL([ENABLE_OPENWFD_BACKEND],
+               [test x$enable_openwfd_backend = xyes])
+
 AC_ARG_ENABLE([rdp-compositor], [  --enable-rdp-compositor],,
               enable_rdp_compositor=no)
 AM_CONDITIONAL([ENABLE_RDP_COMPOSITOR],
@@ -504,6 +517,7 @@ AC_MSG_RESULT([
 	Headless Compositor		${enable_headless_compositor}
 	RPI Compositor			${enable_rpi_compositor}
 	FBDEV Compositor		${enable_fbdev_compositor}
+	OpenWFD Backend			${enable_openwfd_backend}
 	RDP Compositor			${enable_rdp_compositor}
 
 	Raspberry Pi BCM headers	${have_bcm_host}

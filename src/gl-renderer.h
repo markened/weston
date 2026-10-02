@@ -27,6 +27,7 @@
 #ifdef ENABLE_EGL
 
 #include <EGL/egl.h>
+#include <EGL/eglext.h>
 
 #else
 
@@ -60,9 +61,16 @@ struct gl_renderer_interface {
 	int (*output_create)(struct weston_output *output,
 			     EGLNativeWindowType window);
 
+	int (*output_create_offscreen)(struct weston_output *output);
+
 	void (*output_destroy)(struct weston_output *output);
 
 	EGLSurface (*output_surface)(struct weston_output *output);
+
+	void (*output_set_target)(struct weston_output *output, unsigned int target);
+
+	EGLImageKHR (*output_get_image)(struct weston_output *output,
+					unsigned int target);
 
 	/* Sets the output border.
 	 *
